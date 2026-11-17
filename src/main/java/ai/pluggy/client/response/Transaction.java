@@ -14,6 +14,7 @@ public class Transaction {
   String date;
   Double balance;
   String category;
+  String categoryId;
   String providerCode;
   TransactionStatus status;
   PaymentData paymentData;
@@ -21,5 +22,11 @@ public class Transaction {
   TransactionType type;
   Merchant merchant;
   String operationType;
+  String operationTypeAdditionalInfo;
   String providerId;
+  /**
+   * Sequential position of the transaction within the same day, used to preserve ordering when
+   * multiple transactions share the same date.
+   */
+  Integer order;
 }
