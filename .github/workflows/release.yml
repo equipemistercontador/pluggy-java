@@ -1,0 +1,89 @@
+name: Semantic Release
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Set up JDK
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+
+      - name: Extract version from pom.xml
+        id: get_version
+        run: |
+          version=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'tag=v%s\n' "$version" >> "$GITHUB_OUTPUT"
+          echo "Extracted version: $version"
+
+      - name: Check if tag exists
+        id: check_tag
+        env:
+          TAG: ${{ steps.get_version.outputs.tag }}
+        run: |
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG already exists, skipping release"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG does not exist, proceeding with release"
+          fi
+
+      - name: Generate release notes
+        if: steps.check_tag.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
+        run: |
+          previous_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          {
+            echo "## Release $VERSION"
+            echo ""
+            echo "### Changes"
+            echo ""
+            if [ -z "$previous_tag" ]; then
+              git log --pretty=format:"- %s (%h)" --no-merges
+            else
+              git log "$previous_tag..HEAD" --pretty=format:"- %s (%h)" --no-merges
+            fi
+          } > release_notes.txt
+
+      - name: Create Git tag
+        if: steps.check_tag.outputs.exists == 'false'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.get_version.outputs.tag }}
+          VERSION: ${{ steps.get_version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local credential.https://github.com.helper \
+            "!f() { echo 'username=x-access-token'; echo \"password=\$GITHUB_TOKEN\"; }; f"
+          git tag -a "$TAG" -m "Release $VERSION"
+          git push origin "$TAG"
+
+      - name: Create GitHub Release
+        if: steps.check_tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.get_version.outputs.tag }}
+          VERSION: ${{ steps.get_version.outputs.version }}
+        run: gh release create "$TAG" --title "Release $VERSION" --notes-file release_notes.txt
+

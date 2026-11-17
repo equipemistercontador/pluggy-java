@@ -9,6 +9,7 @@ import ai.pluggy.client.auth.EncryptedParametersInterceptor;
 import ai.pluggy.client.response.ErrorResponse;
 import ai.pluggy.exception.PluggyException;
 import ai.pluggy.utils.Utils;
+import ai.pluggy.utils.Version;
 import com.google.gson.FieldNamingPolicy;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -162,7 +163,10 @@ public final class PluggyClient {
       // init OkHttpClient.Builder instance, to expose it for configurability
       this.okHttpClientBuilder = new Builder()
           .readTimeout(DEFAULT_HTTP_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-          .connectTimeout(DEFAULT_HTTP_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+          .connectTimeout(DEFAULT_HTTP_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+          // OkHttp would keep the x-api-key header, and the body on 307/308, when
+          // redirected to another host. A redirect surfaces as a non-successful response.
+          .followRedirects(false);
     }
 
     public PluggyClientBuilder clientIdAndSecret(String clientId, String clientSecret) {
@@ -180,6 +184,8 @@ public final class PluggyClient {
     }
 
     public PluggyClientBuilder rsaPublicKey(String rsaPublicKey) {
+      // a key read from an unset variable must not silently disable encryption
+      assertNotNull(rsaPublicKey, "rsaPublicKey");
       this.rsaPublicKey = rsaPublicKey;
       return this;
     }
@@ -207,25 +213,33 @@ public final class PluggyClient {
      * Provides access to the OkHttpClient.Builder instance, for more complex builds
      * and
      * configurations (interceptors, SSL, etc.)
+     * <p>
+     * Redirects are not followed by default. Enabling them with followRedirects(true)
+     * means that the "x-api-key" header, and on a 307 or 308 the request body, can be
+     * sent to whichever host a redirect points to.
      */
     public OkHttpClient.Builder okHttpClientBuilder() {
       return okHttpClientBuilder;
     }
 
     private OkHttpClient buildOkHttpClient(String baseUrl) {
+      // add the SDK interceptors to a copy, so a builder that is built again doesn't
+      // carry over the interceptors, and so the credentials, of its earlier clients.
+      Builder clientBuilder = okHttpClientBuilder.build().newBuilder();
+
       if (!disableDefaultAuthInterceptor) {
         // use ApiKeyAuthInterceptor, unless decided to opt-out and use your own
         // auth header interceptor implementation.
         String authUrlPath = baseUrl + PluggyClient.AUTH_URL_PATH;
-        this.okHttpClientBuilder
+        clientBuilder
             .addInterceptor(new ApiKeyAuthInterceptor(authUrlPath, clientId, clientSecret));
       }
 
       if (this.rsaPublicKey != null) {
-        this.okHttpClientBuilder.addInterceptor(new EncryptedParametersInterceptor(this.rsaPublicKey));
+        clientBuilder.addInterceptor(new EncryptedParametersInterceptor(this.rsaPublicKey));
       }
 
-      return okHttpClientBuilder.build();
+      return clientBuilder.build();
     }
 
     private Gson buildGson() {
@@ -292,7 +306,7 @@ public final class PluggyClient {
         .post(body)
         .addHeader("content-type", "application/json")
         .addHeader("cache-control", "no-cache")
-        .addHeader("User-Agent", "PluggyJava/0.16.2")
+        .addHeader("User-Agent", Version.userAgent())
         .build();
 
     String apiKey;
@@ -304,8 +318,11 @@ public final class PluggyClient {
         // unexpected IO exception
         throw e;
       } catch (Exception e) {
-        // non-successful or malformed JSON response
-        String pluggyResponseErrorMessage = buildResponseErrorMessage(response);
+        // non-successful or malformed JSON response. A successful /auth body carries the api
+        // key, so it is only included when the response is an error.
+        String pluggyResponseErrorMessage = response.isSuccessful()
+            ? buildResponseErrorMessage(response, null)
+            : buildResponseErrorMessage(response);
 
         throw new PluggyException(pluggyResponseErrorMessage, response, e);
       }

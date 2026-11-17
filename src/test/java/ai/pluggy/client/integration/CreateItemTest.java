@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import ai.pluggy.client.PluggyClient;
 import ai.pluggy.client.request.CreateItemRequest;
@@ -39,7 +40,7 @@ public class CreateItemTest extends BaseApiIntegrationTest {
 
         // run request with 'connectorId', 'parameters', 'webhookUrl', 'clientUserId',
         // params
-        String webhookUrl = "https://www.test.com/";
+        String webhookUrl = "https://pluggy-java-tests.requestcatcher.com/create";
         String clientUserId = "clientUserId";
         CreateItemRequest createItemRequestWithWebhook = new CreateItemRequest(connectorId,
                 parametersMap, webhookUrl, clientUserId);
@@ -107,6 +108,9 @@ public class CreateItemTest extends BaseApiIntegrationTest {
     @SneakyThrows
     @Test
     void createItem_withEncryptedParameters_responseOk() {
+        assumeTrue(BaseApiIntegrationTest.RSA_PUBLIC_KEY != null,
+                "PLUGGY_RSA_PUBLIC_KEY is not set");
+
         // create item params
         ParametersMap parametersMap = ParametersMap.map("user", "user-ok")
                 .with("password", "password-ok");

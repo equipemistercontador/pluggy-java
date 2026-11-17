@@ -4,7 +4,17 @@ import ai.pluggy.client.request.AccountsRequest;
 import ai.pluggy.client.request.ConnectorsSearchRequest;
 import ai.pluggy.client.request.CreateConnectTokenRequest;
 import ai.pluggy.client.request.CreateItemRequest;
+import ai.pluggy.client.request.CreatePixBiometricPaymentRequest;
+import ai.pluggy.client.request.CreateSmartTransferPaymentRequest;
+import ai.pluggy.client.request.CreateSmartTransferPreauthorizationRequest;
 import ai.pluggy.client.request.InvestmentTransactionsSearchRequest;
+import ai.pluggy.client.request.ItemResourcesSearchRequest;
+import ai.pluggy.client.request.ItemsCursorSearchRequest;
+import ai.pluggy.client.request.PaymentIntentsSearchRequest;
+import ai.pluggy.client.request.PixBiometricEnrollmentsSearchRequest;
+import ai.pluggy.client.request.SmartTransferPreauthorizationPaymentsSearchRequest;
+import ai.pluggy.client.request.SmartTransferPreauthorizationsSearchRequest;
+import ai.pluggy.client.request.TransactionsCursorSearchRequest;
 import ai.pluggy.client.request.TransactionsSearchRequest;
 import ai.pluggy.client.request.UpdateItemMfaRequest;
 import ai.pluggy.client.request.UpdateItemRequest;
@@ -55,6 +65,76 @@ public interface PluggyApiService {
   @DELETE("/items/{id}")
   Call<DeleteItemResponse> deleteItem(@Path("id") String existingItemId);
 
+  /**
+   * First page of the team's items, newest first, cursor-paginated. Fetch the following pages by
+   * passing {@link ItemsCursorResponse#getNextCursor()} as
+   * {@link ItemsCursorSearchRequest#after(String)} until it returns null.
+   *
+   * <p><b>Availability: opt-in, paid plans only.</b> Listing items is disabled by default and is
+   * only available to paid-plan teams that have explicitly requested it from Pluggy support. Teams
+   * without it enabled get {@code 403 LIST_ITEMS_FEATURE_NOT_ENABLED}. For most integrations,
+   * store each itemId when it is created (Pluggy Connect {@code onSuccess} or the
+   * {@code item/created} webhook) and use {@link #getItem(String)} instead.
+   */
+  @GET("/v2/items")
+  Call<ItemsCursorResponse> getItems();
+
+  /**
+   * Items filtered by {@code clientUserId} and/or {@code connectorId}, newest first,
+   * cursor-paginated. See {@link #getItems()}.
+   *
+   * <p><b>Availability: opt-in, paid plans only.</b> Listing items is disabled by default and is
+   * only available to paid-plan teams that have explicitly requested it from Pluggy support. Teams
+   * without it enabled get {@code 403 LIST_ITEMS_FEATURE_NOT_ENABLED}. For most integrations,
+   * store each itemId when it is created (Pluggy Connect {@code onSuccess} or the
+   * {@code item/created} webhook) and use {@link #getItem(String)} instead.
+   */
+  @GET("/v2/items")
+  Call<ItemsCursorResponse> getItems(@QueryMap ItemsCursorSearchRequest itemsCursorSearchRequest);
+
+  /**
+   * Open Finance only: the resources the financial institution declared for the item's consent.
+   * Items on other connectors return an empty page.
+   */
+  @GET("/items/{id}/resources")
+  Call<ItemResourcesResponse> getItemResources(@Path("id") String itemId);
+
+  @GET("/items/{id}/resources")
+  Call<ItemResourcesResponse> getItemResources(@Path("id") String itemId,
+      @QueryMap ItemResourcesSearchRequest itemResourcesSearchRequest);
+
+  /**
+   * Retrieve the SCR (Bacen's Sistema de Informações de Crédito) for the document behind an item,
+   * for the last 4 available base dates. The response is Bacen's own payload, forwarded unchanged.
+   *
+   * <p>Opt-in: requires the SCR feature to be enabled for your team (ask Pluggy support); otherwise
+   * 403 SCR_FEATURE_NOT_ENABLED (see {@link ErrorResponse#getCodeDescription()}). Only available for
+   * Open Finance items with a known CPF/CNPJ (otherwise 422 SCR_ITEM_NOT_SUPPORTED).
+   *
+   * @param itemId item primary identifier
+   */
+  @GET("/items/{id}/scr")
+  Call<ScrResponse> getItemScr(@Path("id") String itemId);
+
+  /**
+   * Retrieve the SCR (Bacen's Sistema de Informações de Crédito) for the document behind an item,
+   * for a range of base dates. Base dates are months, and Bacen consolidates each one with a few
+   * months of delay, so the current month returns nothing.
+   *
+   * <p>Opt-in: requires the SCR feature to be enabled for your team (ask Pluggy support); otherwise
+   * 403 SCR_FEATURE_NOT_ENABLED (see {@link ErrorResponse#getCodeDescription()}). Only available for
+   * Open Finance items with a known CPF/CNPJ (otherwise 422 SCR_ITEM_NOT_SUPPORTED).
+   *
+   * @param itemId item primary identifier
+   * @param from first base date to consult, as YYYYMM (e.g. {@code 202604}); null to default to 3
+   *     base dates before {@code to}
+   * @param to last base date to consult, as YYYYMM (e.g. {@code 202607}); null to default to 2
+   *     months before the current one
+   */
+  @GET("/items/{id}/scr")
+  Call<ScrResponse> getItemScr(@Path("id") String itemId, @Query("from") String from,
+      @Query("to") String to);
+
   @GET("/accounts")
   Call<AccountsResponse> getAccounts(@Query("itemId") String itemId);
 
@@ -64,18 +144,48 @@ public interface PluggyApiService {
   @GET("/accounts/{id}")
   Call<Account> getAccount(@Path("id") String accountId);
 
+  /**
+   * Real-time balance fetched from the institution. Only available for Open Finance connectors;
+   * accounts on other connectors get an error response.
+   */
+  @GET("/accounts/{id}/balance")
+  Call<AccountBalance> getAccountBalance(@Path("id") String accountId);
+
   @GET("/bills")
   Call<BillsResponse> getBills(@Query("accountId") String accountId);
   
   @GET("/bills/{id}")
   Call<Bill> getBill(@Path("id") String billId);
   
+  /**
+   * @deprecated {@code GET /transactions} is deprecated and returns 410 for newer applications.
+   * Use {@link #getTransactionsV2(String)} (cursor pagination) instead.
+   */
+  @Deprecated
   @GET("/transactions")
   Call<TransactionsResponse> getTransactions(@Query("accountId") String accountId);
 
+  /**
+   * @deprecated {@code GET /transactions} is deprecated and returns 410 for newer applications.
+   * Use {@link #getTransactionsV2(String, TransactionsCursorSearchRequest)} (cursor pagination)
+   * instead.
+   */
+  @Deprecated
   @GET("/transactions")
   Call<TransactionsResponse> getTransactions(@Query("accountId") String accountId,
       @QueryMap TransactionsSearchRequest transactionsSearchRequest);
+
+  /**
+   * First page of an account's transactions, cursor-paginated. Fetch the following pages by
+   * passing {@link TransactionsCursorResponse#getNextCursor()} as
+   * {@link TransactionsCursorSearchRequest#after(String)} until it returns null.
+   */
+  @GET("/v2/transactions")
+  Call<TransactionsCursorResponse> getTransactionsV2(@Query("accountId") String accountId);
+
+  @GET("/v2/transactions")
+  Call<TransactionsCursorResponse> getTransactionsV2(@Query("accountId") String accountId,
+      @QueryMap TransactionsCursorSearchRequest transactionsCursorSearchRequest);
 
   @GET("/transactions/{id}")
   Call<Transaction> getTransaction(@Path("id") String transactionId);
@@ -96,6 +206,133 @@ public interface PluggyApiService {
   @GET("/categories/{id}")
   Call<Category> getCategory(@Path("id") String categoryId);
 
-  @POST("/connecttokens")
+  @POST("/connect_token")
   Call<ConnectTokenResponse> createConnectToken(@Body CreateConnectTokenRequest createConnectTokenRequest);
+
+  /**
+   * Create a Smart Transfer preauthorization. Redirect the payer to the returned
+   * {@link SmartTransferPreauthorization#getConsentUrl()} to authorize it; once its status is
+   * {@code COMPLETED}, payments can be created under it with
+   * {@link #createSmartTransferPayment(CreateSmartTransferPaymentRequest)}.
+   *
+   * <p>Set {@code linkedJourney} to also ask the payer for permission to read the source account
+   * balance (see {@link #getSmartTransferPreauthorizationBalance(String)}).
+   */
+  @POST("/smart-transfers/preauthorizations")
+  Call<SmartTransferPreauthorization> createSmartTransferPreauthorization(
+      @Body CreateSmartTransferPreauthorizationRequest createSmartTransferPreauthorizationRequest);
+
+  /** First page of the Smart Transfer preauthorizations. */
+  @GET("/smart-transfers/preauthorizations")
+  Call<SmartTransferPreauthorizationsResponse> getSmartTransferPreauthorizations();
+
+  @GET("/smart-transfers/preauthorizations")
+  Call<SmartTransferPreauthorizationsResponse> getSmartTransferPreauthorizations(
+      @QueryMap SmartTransferPreauthorizationsSearchRequest smartTransferPreauthorizationsSearchRequest);
+
+  /**
+   * Retrieve a Smart Transfer preauthorization. This also refreshes the status of its
+   * {@code dataConsent} from the institution; the list returns the last known status.
+   */
+  @GET("/smart-transfers/preauthorizations/{id}")
+  Call<SmartTransferPreauthorization> getSmartTransferPreauthorization(
+      @Path("id") String preauthorizationId);
+
+  /**
+   * Read the source account balance of a Smart Transfer preauthorization in real time from the
+   * institution. Requires a preauthorization created with {@code linkedJourney} whose
+   * {@code dataConsent} is {@code AUTHORISED}; otherwise 400
+   * {@code SMART_TRANSFER_DATA_CONSENT_NOT_REQUESTED} or 403
+   * {@code SMART_TRANSFER_DATA_CONSENT_NOT_AVAILABLE} (see
+   * {@link ErrorResponse#getCodeDescription()}).
+   *
+   * <p>Every call counts toward the institution's monthly Open Finance quota for the account; 429
+   * {@code BALANCE_OPEN_FINANCE_RATE_LIMIT} when it is reached.
+   */
+  @GET("/smart-transfers/preauthorizations/{id}/balance")
+  Call<SmartTransferPreauthorizationBalance> getSmartTransferPreauthorizationBalance(
+      @Path("id") String preauthorizationId);
+
+  /**
+   * Cancel only the balance permission of a Smart Transfer preauthorization. The preauthorization
+   * stays active and its payments keep working. Safe to retry: a permission that already ended
+   * answers with {@code dataConsent.status} {@code REJECTED}.
+   *
+   * @return the preauthorization, with the cancelled permission
+   */
+  @DELETE("/smart-transfers/preauthorizations/{id}/data-consent")
+  Call<SmartTransferPreauthorization> cancelSmartTransferPreauthorizationDataConsent(
+      @Path("id") String preauthorizationId);
+
+  /** First page of a Smart Transfer preauthorization's payments, newest first. */
+  @GET("/smart-transfers/preauthorizations/{id}/payments")
+  Call<SmartTransferPaymentsResponse> getSmartTransferPreauthorizationPayments(
+      @Path("id") String preauthorizationId);
+
+  @GET("/smart-transfers/preauthorizations/{id}/payments")
+  Call<SmartTransferPaymentsResponse> getSmartTransferPreauthorizationPayments(
+      @Path("id") String preauthorizationId,
+      @QueryMap SmartTransferPreauthorizationPaymentsSearchRequest smartTransferPreauthorizationPaymentsSearchRequest);
+
+  /** Create a payment under a {@code COMPLETED} Smart Transfer preauthorization. */
+  @POST("/smart-transfers/payments")
+  Call<SmartTransferPayment> createSmartTransferPayment(
+      @Body CreateSmartTransferPaymentRequest createSmartTransferPaymentRequest);
+
+  @GET("/smart-transfers/payments/{id}")
+  Call<SmartTransferPayment> getSmartTransferPayment(@Path("id") String paymentId);
+
+  /**
+   * Create a Pix por biometria payment request. Send the payer to the returned
+   * {@link PaymentRequest#getPaymentUrl()}, where they link their account (creating a passkey) and
+   * pay; later payments are made with the linked account.
+   */
+  @POST("/payments/requests/pix-biometric")
+  Call<PaymentRequest> createPaymentRequestPixBiometric(
+      @Body CreatePixBiometricPaymentRequest createPixBiometricPaymentRequest);
+
+  /** First page of the Pix por biometria enrollments (linked accounts). */
+  @GET("/pix-biometric/enrollments")
+  Call<PixBiometricEnrollmentsResponse> getPixBiometricEnrollments();
+
+  @GET("/pix-biometric/enrollments")
+  Call<PixBiometricEnrollmentsResponse> getPixBiometricEnrollments(
+      @QueryMap PixBiometricEnrollmentsSearchRequest pixBiometricEnrollmentsSearchRequest);
+
+  @GET("/pix-biometric/enrollments/{id}")
+  Call<PixBiometricEnrollment> getPixBiometricEnrollment(@Path("id") String enrollmentId);
+
+  /**
+   * Read the account balance of a Pix por biometria enrollment created with
+   * {@code linkedJourney}, in real time from the institution. Every call counts toward the
+   * institution's monthly quota for the account.
+   */
+  @GET("/pix-biometric/enrollments/{id}/balance")
+  Call<PixBiometricBalance> getPixBiometricEnrollmentBalance(@Path("id") String enrollmentId);
+
+  /**
+   * Revoke a Pix por biometria enrollment. This cannot be undone: the payer must link again.
+   *
+   * @return the revoked enrollment
+   */
+  @POST("/pix-biometric/enrollments/{id}/revoke")
+  Call<PixBiometricEnrollment> revokePixBiometricEnrollment(@Path("id") String enrollmentId);
+
+  /**
+   * Cancel only the balance permission of a Pix por biometria enrollment. The enrollment stays
+   * active.
+   *
+   * @return the enrollment, with the cancelled permission
+   */
+  @DELETE("/pix-biometric/enrollments/{id}/data-consent")
+  Call<PixBiometricEnrollment> cancelPixBiometricEnrollmentDataConsent(
+      @Path("id") String enrollmentId);
+
+  /** Payment intents, optionally filtered by payment request or Pix por biometria enrollment. */
+  @GET("/payments/intents")
+  Call<PaymentIntentsResponse> getPaymentIntents();
+
+  @GET("/payments/intents")
+  Call<PaymentIntentsResponse> getPaymentIntents(
+      @QueryMap PaymentIntentsSearchRequest paymentIntentsSearchRequest);
 }
